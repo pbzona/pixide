@@ -1,4 +1,5 @@
 export * from "./convert";
+export * from "./crop";
 export * from "./edit";
 export * from "./grid";
 export * from "./guides";

@@ -10,6 +10,7 @@ import type {
   PixelPreview,
   PixelWorkerRequest,
   PixelWorkerResponse,
+  SourceCrop,
 } from "@/lib/pixel";
 
 type PendingRequest = Readonly<{
@@ -143,6 +144,22 @@ export const usePixelWorker = () => {
       };
     },
     [cancelActiveWorker, send, supersedeQueuedProcessing],
+  );
+
+  const cropSource = useCallback(
+    async (crop: SourceCrop): Promise<PixelPreview> => {
+      supersedeQueuedProcessing();
+      const response = await send({ type: "crop-source", crop });
+      if (response.type !== "source-ready") {
+        throw new Error("Source image was not cropped.");
+      }
+      return {
+        width: response.previewWidth,
+        height: response.previewHeight,
+        pixels: new Uint8ClampedArray(response.previewPixels),
+      };
+    },
+    [send, supersedeQueuedProcessing],
   );
 
   const sendConversion = useCallback(
@@ -306,7 +323,7 @@ export const usePixelWorker = () => {
     [],
   );
 
-  return { setSource, convert, preview, extractPalette };
+  return { setSource, cropSource, convert, preview, extractPalette };
 };
 
 const transferableBuffer = (pixels: Uint8ClampedArray): ArrayBuffer => {

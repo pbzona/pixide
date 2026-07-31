@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Columns2, Grid2X2, Grid3X3, Maximize2, Minus, Plus } from "lucide-react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { Columns2, Crop, Grid2X2, Grid3X3, Maximize2, Minus, Plus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,9 @@ import {
   contiguousSelectionMask,
   getGuidePositions,
   lineCells,
+  MIN_GRID_SIDE,
   rectangleSelectionMask,
+  type CellCrop,
   type PixelPaletteColor,
   type PixelPreview,
   type SelectionMask,
@@ -47,6 +49,8 @@ type PixelCanvasProps = Readonly<{
   selectionBrushSize: number;
   selectionCombineMode: SelectionCombineMode;
   processing: boolean;
+  crop: CellCrop | null;
+  cropping: boolean;
   showGuides: boolean;
   guideColumns: number;
   guideRows: number;
@@ -59,9 +63,11 @@ type PixelCanvasProps = Readonly<{
   onFill: (index: number) => void;
   onPick: (index: number) => void;
   onSelectionChange: (mask: Uint8Array | null) => void;
+  onCropChange: (crop: CellCrop | null) => void;
+  onCropApply: () => void;
 }>;
 
-const MIN_ZOOM = 2;
+const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 40;
 
 type Cell = Readonly<{ x: number; y: number }>;
@@ -91,7 +97,16 @@ type SelectionGesture = {
   previewMask: SelectionMask;
 };
 
-type CanvasGesture = PaintGesture | SelectionGesture;
+type CropGesture = {
+  kind: "crop";
+  pointerId: number;
+  startCell: Cell;
+  lastCell: Cell;
+  width: number;
+  height: number;
+};
+
+type CanvasGesture = PaintGesture | SelectionGesture | CropGesture;
 
 type PanGesture = {
   pointerId: number;
@@ -125,6 +140,8 @@ export function PixelCanvas({
   selectionBrushSize,
   selectionCombineMode,
   processing,
+  crop,
+  cropping,
   showGuides,
   guideColumns,
   guideRows,
@@ -137,6 +154,8 @@ export function PixelCanvas({
   onFill,
   onPick,
   onSelectionChange,
+  onCropChange,
+  onCropApply,
 }: PixelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const selectionCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -227,12 +246,21 @@ export function PixelCanvas({
   const fitCanvas = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const availableWidth = Math.max(120, viewport.clientWidth - 80);
-    const availableHeight = Math.max(120, viewport.clientHeight - 80);
-    setZoom(
-      Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.floor(Math.min(availableWidth / width, availableHeight / height)))),
-    );
+    const availableWidth = Math.max(1, viewport.clientWidth - 80);
+    const availableHeight = Math.max(1, viewport.clientHeight - 80);
+    const availableZoom = Math.min(availableWidth / width, availableHeight / height);
+    const fittedZoom = availableZoom >= 1
+      ? Math.floor(availableZoom)
+      : Math.floor(availableZoom * 100) / 100;
+    setZoom(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, fittedZoom)));
   };
+
+  const fitCanvasForGrid = useEffectEvent(fitCanvas);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(fitCanvasForGrid);
+    return () => window.cancelAnimationFrame(frame);
+  }, [width, height]);
 
   const cellFromPointer = (
     event: React.PointerEvent<HTMLDivElement>,
@@ -312,6 +340,17 @@ export function PixelCanvas({
       return;
     }
 
+    if (gesture.kind === "crop") {
+      gesture.lastCell = cell;
+      onCropChange({
+        left: Math.min(gesture.startCell.x, cell.x),
+        top: Math.min(gesture.startCell.y, cell.y),
+        right: Math.max(gesture.startCell.x, cell.x) + 1,
+        bottom: Math.max(gesture.startCell.y, cell.y) + 1,
+      });
+      return;
+    }
+
     if (gesture.tool === "brush") {
       addBrushSegment(
         gesture.incomingMask,
@@ -348,6 +387,7 @@ export function PixelCanvas({
       onEndStroke();
       return;
     }
+    if (gesture.kind === "crop") return;
 
     setSelectionPreview(null);
     if (commitSelection) onSelectionChange(gesture.previewMask);
@@ -427,6 +467,26 @@ export function PixelCanvas({
 
   const beginGesture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || gestureRef.current) return;
+    if (crop) {
+      const cell = cellFromPointer(event);
+      const gesture: CropGesture = {
+        kind: "crop",
+        pointerId: event.pointerId,
+        startCell: cell,
+        lastCell: cell,
+        width,
+        height,
+      };
+      gestureRef.current = gesture;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      onCropChange({
+        left: cell.x,
+        top: cell.y,
+        right: cell.x + 1,
+        bottom: cell.y + 1,
+      });
+      return;
+    }
     if (mode !== "paint" && mode !== "select") return;
     if (mode === "paint" && !colorIds) return;
 
@@ -532,17 +592,17 @@ export function PixelCanvas({
       <div className="absolute top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 border border-white/10 bg-[#191a1d]/95 p-1 shadow-lg shadow-black/30 backdrop-blur">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 2))}>
+            <Button variant="ghost" size="icon-sm" onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - (value <= 2 ? 0.25 : 2)))}>
               <Minus />
               <span className="sr-only">Zoom out</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent>Zoom out</TooltipContent>
         </Tooltip>
-        <span className="w-11 text-center font-mono text-[10px] tabular-nums">{zoom}×</span>
+        <span className="w-11 text-center font-mono text-[10px] tabular-nums">{Number(zoom.toFixed(2))}×</span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 2))}>
+            <Button variant="ghost" size="icon-sm" onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + (value < 2 ? 0.25 : 2)))}>
               <Plus />
               <span className="sr-only">Zoom in</span>
             </Button>
@@ -581,6 +641,25 @@ export function PixelCanvas({
             </Button>
           </TooltipTrigger>
           <TooltipContent>Fit canvas</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant={crop ? "secondary" : "ghost"}
+              size="icon-sm"
+              disabled={cropping}
+              aria-pressed={crop !== null}
+              onClick={() =>
+                onCropChange(
+                  crop ? null : { left: 0, top: 0, right: width, bottom: height },
+                )
+              }
+            >
+              <Crop />
+              <span className="sr-only">{crop ? "Cancel crop" : "Crop source image"}</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{crop ? "Cancel crop" : "Crop source image"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -666,6 +745,43 @@ export function PixelCanvas({
         </Popover>
       </div>
 
+      {crop ? (
+        <div className="absolute top-15 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 border border-white/10 bg-[#191a1d]/95 p-1 shadow-lg shadow-black/30 backdrop-blur">
+          <span className="px-2 font-mono text-[10px] tabular-nums text-white/70">
+            {crop.right - crop.left}×{crop.bottom - crop.top} cells
+            {crop.right - crop.left < MIN_GRID_SIDE ||
+            crop.bottom - crop.top < MIN_GRID_SIDE
+              ? ` · minimum ${MIN_GRID_SIDE}×${MIN_GRID_SIDE}`
+              : null}
+          </span>
+          <Button
+            size="xs"
+            disabled={
+              cropping ||
+              processing ||
+              crop.right - crop.left < MIN_GRID_SIDE ||
+              crop.bottom - crop.top < MIN_GRID_SIDE ||
+              (crop.left === 0 &&
+                crop.top === 0 &&
+                crop.right === width &&
+                crop.bottom === height)
+            }
+            onClick={onCropApply}
+          >
+            Apply crop
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            disabled={cropping}
+            onClick={() => onCropChange(null)}
+          >
+            <X />
+            <span className="sr-only">Cancel crop</span>
+          </Button>
+        </div>
+      ) : null}
+
       <div
         ref={viewportRef}
         className={cn(
@@ -694,7 +810,7 @@ export function PixelCanvas({
               spaceHeld && !panning && "cursor-grab",
               !spaceHeld &&
                 !panning &&
-                (mode === "paint" || mode === "select") &&
+                (crop || mode === "paint" || mode === "select") &&
                 "cursor-crosshair touch-none",
             )}
             style={{ width: width * zoom, height: height * zoom }}
@@ -708,7 +824,7 @@ export function PixelCanvas({
                 ? "pixel-active-cell"
                 : undefined
             }
-            tabIndex={mode === "paint" || mode === "select" ? 0 : -1}
+            tabIndex={!crop && (mode === "paint" || mode === "select") ? 0 : -1}
             onFocus={() => setKeyboardActive(true)}
             onBlur={() => setKeyboardActive(false)}
             onKeyDown={(event) => {
@@ -769,6 +885,18 @@ export function PixelCanvas({
                 aria-hidden="true"
               />
             ) : null}
+            {crop ? (
+              <span
+                className="pointer-events-none absolute border-2 border-[#ef6a47] shadow-[0_0_0_9999px_rgba(0,0,0,.58)]"
+                style={{
+                  left: crop.left * zoom,
+                  top: crop.top * zoom,
+                  width: (crop.right - crop.left) * zoom,
+                  height: (crop.bottom - crop.top) * zoom,
+                }}
+                aria-hidden="true"
+              />
+            ) : null}
             {showGuides ? (
               <span className="pointer-events-none absolute inset-0" aria-hidden="true">
                 {getGuidePositions(guideColumns).map((position) => (
@@ -787,7 +915,7 @@ export function PixelCanvas({
                 ))}
               </span>
             ) : null}
-            {keyboardActive && (mode === "paint" || mode === "select") ? (
+            {!crop && keyboardActive && (mode === "paint" || mode === "select") ? (
               <span
                 role="row"
                 className="pointer-events-none absolute"

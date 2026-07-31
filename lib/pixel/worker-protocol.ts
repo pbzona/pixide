@@ -1,5 +1,6 @@
 import type { PaletteExtraction } from "@/lib/palette";
 
+import type { SourceCrop } from "./crop";
 import type { ConversionOptions, InputAdjustments } from "./types";
 
 export type PixelWorkerRequest =
@@ -9,6 +10,11 @@ export type PixelWorkerRequest =
       width: number;
       height: number;
       pixels: ArrayBuffer;
+    }>
+  | Readonly<{
+      type: "crop-source";
+      requestId: number;
+      crop: SourceCrop;
     }>
   | Readonly<{
       type: "convert";

@@ -70,11 +70,14 @@ import {
   paletteToMatchingColors,
   paletteToPixelColors,
   selectAllMask,
+  sourceCropFromCells,
   TRANSPARENT_COLOR_ID,
+  type CellCrop,
   type ConversionMethod,
   type InputAdjustments,
   type PixelPaletteColor,
   type PixelPreview,
+  type SourceCrop,
 } from "@/lib/pixel";
 
 import { Inspector } from "./inspector";
@@ -234,6 +237,7 @@ const pruneExcludedColorIds = (colorIds: ReadonlySet<number>, palette: Palette) 
 export function PixelStudio() {
   const {
     setSource: setWorkerSource,
+    cropSource: cropWorkerSource,
     convert,
     preview,
     extractPalette,
@@ -242,6 +246,7 @@ export function PixelStudio() {
   const sourceUrlRef = useRef<string | null>(null);
   const sourceFileRef = useRef<File | null>(null);
   const sourceGenerationRef = useRef(0);
+  const sourceCropRef = useRef<SourceCrop | null>(null);
   const [sourceVersion, setSourceVersion] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -252,6 +257,9 @@ export function PixelStudio() {
   const [gridHeight, setGridHeight] = useState(64);
   const [aspectLocked, setAspectLocked] = useState(true);
   const [pendingGrid, setPendingGrid] = useState<{ width: number; height: number } | null>(null);
+  const [cropDraft, setCropDraft] = useState<CellCrop | null>(null);
+  const [pendingCrop, setPendingCrop] = useState<CellCrop | null>(null);
+  const [cropping, setCropping] = useState(false);
   const [dimensionInputVersion, setDimensionInputVersion] = useState(0);
   const [method, setMethod] = useState<ConversionMethod>("dominant");
   const [preserveTransparency, setPreserveTransparency] = useState(true);
@@ -395,11 +403,21 @@ export function PixelStudio() {
         ) {
           return;
         }
-        const recoveredPreview = await setWorkerSource(
+        let recoveredPreview = await setWorkerSource(
           decoded.pixels,
           decoded.width,
           decoded.height,
         );
+        const sourceCrop = sourceCropRef.current;
+        if (
+          sourceCrop &&
+          (sourceCrop.x !== 0 ||
+            sourceCrop.y !== 0 ||
+            sourceCrop.width !== decoded.width ||
+            sourceCrop.height !== decoded.height)
+        ) {
+          recoveredPreview = await cropWorkerSource(sourceCrop);
+        }
         if (sourceGeneration !== sourceGenerationRef.current) return;
         setOriginalPreview(recoveredPreview);
         result = await convert(options);
@@ -516,6 +534,12 @@ export function PixelStudio() {
       if (sourceUrlRef.current) URL.revokeObjectURL(sourceUrlRef.current);
       sourceUrlRef.current = url;
       sourceFileRef.current = file;
+      sourceCropRef.current = {
+        x: 0,
+        y: 0,
+        width: decoded.width,
+        height: decoded.height,
+      };
       const grid = initialGrid(decoded.width, decoded.height);
       setSource({
         name: file.name,
@@ -532,6 +556,8 @@ export function PixelStudio() {
       setMethodOverrides(methodOverridesRef.current);
       selectionMaskRef.current = null;
       setSelectionMask(null);
+      setCropDraft(null);
+      setPendingCrop(null);
       setOriginalPreview(sourcePreview);
       setAdjustedPreview(sourcePreview);
       clearHistory();
@@ -571,23 +597,81 @@ export function PixelStudio() {
     setMethodOverrides(methodOverridesRef.current);
     selectionMaskRef.current = null;
     setSelectionMask(null);
+    setCropDraft(null);
     clearHistory();
     setMatchingPalette(
       paletteToMatchingColors(activePalette, adjustments, excludedColorIdsRef.current),
     );
   };
 
+  const hasEditorChanges = () =>
+    hasOverrides(overridesRef.current) ||
+    hasMethodOverrides(methodOverridesRef.current) ||
+    selectionMaskRef.current !== null ||
+    historyRef.current.length > 0 ||
+    futureRef.current.length > 0;
+
   const requestGridChange = (next: { width: number; height: number }) => {
     if (next.width === gridWidth && next.height === gridHeight) return;
-    if (
-      hasOverrides(overridesRef.current) ||
-      hasMethodOverrides(methodOverridesRef.current) ||
-      selectionMaskRef.current !== null ||
-      historyRef.current.length > 0 ||
-      futureRef.current.length > 0
-    ) {
+    if (hasEditorChanges()) {
       setPendingGrid(next);
     } else applyGrid(next);
+  };
+
+  const applyCrop = async (crop: CellCrop) => {
+    if (!source) return;
+    const nextGrid = {
+      width: crop.right - crop.left,
+      height: crop.bottom - crop.top,
+    };
+    if (nextGrid.width < MIN_GRID_SIDE || nextGrid.height < MIN_GRID_SIDE) return;
+
+    const localCrop = sourceCropFromCells(
+      crop,
+      gridWidth,
+      gridHeight,
+      source.width,
+      source.height,
+    );
+    latestConversionRef.current += 1;
+    latestPreviewRef.current += 1;
+    setCropping(true);
+    setProcessing(true);
+    try {
+      const croppedPreview = await cropWorkerSource(localCrop);
+      const currentCrop = sourceCropRef.current ?? {
+        x: 0,
+        y: 0,
+        width: source.width,
+        height: source.height,
+      };
+      sourceCropRef.current = {
+        x: currentCrop.x + localCrop.x,
+        y: currentCrop.y + localCrop.y,
+        width: localCrop.width,
+        height: localCrop.height,
+      };
+      setSource((current) =>
+        current
+          ? { ...current, width: localCrop.width, height: localCrop.height }
+          : current,
+      );
+      applyGrid(nextGrid);
+      setOriginalPreview(croppedPreview);
+      setAdjustedPreview(croppedPreview);
+      setSourceVersion((value) => value + 1);
+    } catch (error) {
+      setProcessing(false);
+      toast.error(error instanceof Error ? error.message : "Source crop failed.");
+    } finally {
+      setCropping(false);
+    }
+  };
+
+  const requestCrop = () => {
+    if (!cropDraft) return;
+    if (hasEditorChanges()) setPendingCrop(cropDraft);
+    else void applyCrop(cropDraft);
   };
 
   const handleGridChange = (axis: "width" | "height", rawValue: number) => {
@@ -1159,7 +1243,10 @@ export function PixelStudio() {
 
   return (
     <div className="flex h-svh min-h-0 flex-col overflow-hidden bg-background text-foreground md:min-h-[560px]">
-      <header className="flex h-13 shrink-0 items-center justify-between border-b bg-background px-3 sm:px-4">
+      <header
+        className="flex h-13 shrink-0 items-center justify-between border-b bg-background px-3 sm:px-4"
+        inert={cropping}
+      >
         <div className="flex min-w-0 items-center gap-3">
           <div className="grid size-6 shrink-0 grid-cols-2 gap-px bg-foreground p-px" aria-hidden="true">
             <span className="bg-background" />
@@ -1301,8 +1388,8 @@ export function PixelStudio() {
 
       <div
         className="relative flex min-h-0 flex-1"
-        inert={uploading}
-        aria-busy={uploading}
+        inert={uploading || cropping}
+        aria-busy={uploading || cropping}
       >
         {desktopControls ? <aside className="w-72 shrink-0 border-r bg-background">
           <Inspector
@@ -1329,6 +1416,8 @@ export function PixelStudio() {
           selectionBrushSize={selectionBrushSize}
           selectionCombineMode={selectionCombineMode}
           processing={processing}
+          crop={cropDraft}
+          cropping={cropping}
           showGuides={showGuides}
           guideColumns={guideColumns}
           guideRows={guideRows}
@@ -1341,6 +1430,8 @@ export function PixelStudio() {
           onFill={fillAt}
           onPick={pickAt}
           onSelectionChange={updateSelectionMask}
+          onCropChange={setCropDraft}
+          onCropApply={requestCrop}
         />
         {desktopControls ? (
           <aside className="flex w-80 shrink-0 flex-col border-l bg-background">
@@ -1354,11 +1445,11 @@ export function PixelStudio() {
             />
           </aside>
         ) : null}
-        {uploading ? (
+        {uploading || cropping ? (
           <div className="absolute inset-0 z-40 grid place-items-center bg-background/45 backdrop-blur-[1px]">
             <div className="flex items-center gap-2 border bg-background px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] shadow-sm">
               <span className="size-2 animate-pulse bg-[#ef6a47] motion-reduce:animate-none" />
-              Replacing image
+              {uploading ? "Replacing image" : "Cropping image"}
             </div>
           </div>
         ) : null}
@@ -1412,6 +1503,34 @@ export function PixelStudio() {
               }}
             >
               Delete palette
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={pendingCrop !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) setPendingCrop(null);
+        }}
+      >
+        <AlertDialogContent className="rounded-none">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Crop the source image?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cropping changes cell positions, so manual paint edits, selections, and
+              regional quantization methods will be cleared.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep current crop</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const crop = pendingCrop;
+                setPendingCrop(null);
+                if (crop) void applyCrop(crop);
+              }}
+            >
+              Crop and clear edits
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

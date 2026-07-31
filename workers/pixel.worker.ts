@@ -4,6 +4,7 @@ import { extractPaletteFromPixels } from "@/lib/palette";
 import {
   DEFAULT_INPUT_ADJUSTMENTS,
   convertImage,
+  cropPixels,
   createSourcePreview,
   type PixelWorkerRequest,
   type PixelWorkerResponse,
@@ -24,6 +25,33 @@ self.onmessage = (event: MessageEvent<PixelWorkerRequest>) => {
       sourcePixels = new Uint8ClampedArray(request.pixels);
       sourceWidth = request.width;
       sourceHeight = request.height;
+      const preview = createSourcePreview(
+        sourcePixels,
+        sourceWidth,
+        sourceHeight,
+        DEFAULT_INPUT_ADJUSTMENTS,
+        true,
+        0,
+      );
+      const previewPixels = preview.pixels.buffer as ArrayBuffer;
+      respond(
+        {
+          type: "source-ready",
+          requestId: request.requestId,
+          previewWidth: preview.width,
+          previewHeight: preview.height,
+          previewPixels,
+        },
+        [previewPixels],
+      );
+      return;
+    }
+
+    if (request.type === "crop-source") {
+      if (!sourcePixels) throw new Error("Upload a source image first.");
+      sourcePixels = cropPixels(sourcePixels, sourceWidth, sourceHeight, request.crop);
+      sourceWidth = request.crop.width;
+      sourceHeight = request.crop.height;
       const preview = createSourcePreview(
         sourcePixels,
         sourceWidth,
