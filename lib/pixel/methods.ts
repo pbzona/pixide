@@ -66,6 +66,30 @@ export const CONVERSION_METHODS: readonly ConversionMethodDefinition[] = [
     description: "Uses a fixed 4x4 threshold matrix",
     family: "ordered",
   },
+  {
+    value: "blue-noise",
+    slug: "blue-noise-dither",
+    label: "Blue-noise dither",
+    shortLabel: "Blue noise",
+    description: "Uses an irregular 8x8 threshold map",
+    family: "ordered",
+  },
+  {
+    value: "riemersma",
+    slug: "riemersma",
+    label: "Riemersma",
+    shortLabel: "Riemersma",
+    description: "Diffuses recent color error along a Hilbert curve",
+    family: "diffusion",
+  },
+  {
+    value: "geometric-median",
+    slug: "geometric-median",
+    label: "Geometric median",
+    shortLabel: "Geo median",
+    description: "Finds a robust center in OKLab",
+    family: "reducer",
+  },
 ];
 
 export const conversionMethodDefinition = (

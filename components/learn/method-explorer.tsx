@@ -34,7 +34,16 @@ const paletteCss = (index: number) => {
 const fixed = (value: number) => value.toFixed(3);
 
 const kindForMethod = (method: ConversionMethod): QuantizationTraceDetails["kind"] => {
-  if (method === "dominant" || method === "average" || method === "median" || method === "center" || method === "bayer") {
+  if (
+    method === "dominant" ||
+    method === "average" ||
+    method === "median" ||
+    method === "center" ||
+    method === "bayer" ||
+    method === "blue-noise" ||
+    method === "riemersma" ||
+    method === "geometric-median"
+  ) {
     return method;
   }
   return "diffusion";
@@ -62,7 +71,16 @@ const rgbLabel = (color: TraceRgb | null) =>
   color ? `${color.r.toFixed(0)}, ${color.g.toFixed(0)}, ${color.b.toFixed(0)}` : "transparent";
 
 const getMatch = (details: QuantizationTraceDetails): PaletteMatchInspection | null => {
-  if (details.kind === "average" || details.kind === "median" || details.kind === "center" || details.kind === "bayer" || details.kind === "diffusion") {
+  if (
+    details.kind === "average" ||
+    details.kind === "median" ||
+    details.kind === "center" ||
+    details.kind === "bayer" ||
+    details.kind === "blue-noise" ||
+    details.kind === "geometric-median" ||
+    details.kind === "diffusion" ||
+    details.kind === "riemersma"
+  ) {
     return details.match;
   }
   return null;
@@ -190,6 +208,16 @@ function CenterAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
 }
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5] as const;
+const BLUE_NOISE = [
+  7, 47, 15, 59, 4, 62, 12, 39,
+  58, 24, 63, 26, 35, 23, 38, 28,
+  8, 41, 0, 43, 13, 33, 2, 32,
+  49, 17, 56, 16, 50, 27, 44, 20,
+  6, 34, 11, 53, 5, 54, 9, 42,
+  51, 30, 37, 25, 36, 21, 40, 18,
+  14, 48, 3, 61, 10, 60, 1, 55,
+  46, 29, 52, 31, 57, 22, 45, 19,
+] as const;
 
 function BayerAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
   if (cell.details.kind !== "bayer") return null;
@@ -223,6 +251,94 @@ function BayerAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
             <span className="block h-full bg-foreground/35" style={{ width: `${(cell.details.mix ?? 0) * 100}%` }} />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function BlueNoiseAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
+  if (cell.details.kind !== "blue-noise") return null;
+  return (
+    <div className="grid gap-5 sm:grid-cols-[auto_1fr] sm:items-center">
+      <div className="grid grid-cols-8 gap-px border border-foreground/15 bg-foreground/15 p-px" aria-label="Blue-noise 8 by 8 threshold map">
+        {BLUE_NOISE.map((value, index) => {
+          const active = index === (cell.y % 8) * 8 + (cell.x % 8);
+          return (
+            <span
+              key={index}
+              className={cn(
+                "grid size-7 place-items-center bg-background font-mono text-[7px]",
+                active && "bg-primary text-primary-foreground",
+              )}
+            >
+              {value}
+            </span>
+          );
+        })}
+      </div>
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ValueCard label="Blue-noise rank" value={String(cell.details.matrixValue)} />
+          <ValueCard label="Projected mix" value={cell.details.mix?.toFixed(3) ?? "—"} />
+        </div>
+        <div>
+          <div className="mb-2 flex justify-between font-mono text-[9px] text-muted-foreground">
+            <span>threshold {cell.details.threshold.toFixed(3)}</span>
+            <span>mix {cell.details.mix?.toFixed(3) ?? "—"}</span>
+          </div>
+          <div className="relative h-3 bg-foreground/10">
+            <span className="absolute inset-y-0 w-px bg-primary" style={{ left: `${cell.details.threshold * 100}%` }} />
+            <span className="block h-full bg-foreground/35" style={{ width: `${(cell.details.mix ?? 0) * 100}%` }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeometricMedianAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
+  if (cell.details.kind !== "geometric-median") return null;
+  const points = cell.details.initial
+    ? [cell.details.initial, ...cell.details.iterations]
+    : [];
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <ValueCard label="Start / OKLab mean" value={cell.details.initial ? `${fixed(cell.details.initial.l)} / ${fixed(cell.details.initial.a)} / ${fixed(cell.details.initial.b)}` : "transparent"} />
+        <ValueCard label="Iterations" value={String(cell.details.iterations.length)} />
+        <ValueCard label="Final sRGB" value={rgbLabel(cell.details.representativeSrgb)} color={cell.details.representativeSrgb ? cssRgb(cell.details.representativeSrgb) : undefined} />
+      </div>
+      <div className="grid gap-px border border-foreground/10 bg-foreground/10 sm:grid-cols-2">
+        {points.map((point, index) => (
+          <div key={index} className="grid grid-cols-[3rem_1fr] gap-3 bg-background/70 px-3 py-2 font-mono text-[9px]">
+            <span className="text-primary">{index === 0 ? "start" : `step ${index}`}</span>
+            <span className="tabular-nums text-muted-foreground">{fixed(point.l)} / {fixed(point.a)} / {fixed(point.b)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RiemersmaAnalysis({ cell }: Readonly<{ cell: QuantizationCellTrace }>) {
+  if (cell.details.kind !== "riemersma") return null;
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <ValueCard label="Hilbert path position" value={String(cell.details.pathIndex + 1)} />
+        <ValueCard label="Errors in history" value={String(cell.details.history.length)} />
+        <ValueCard label="Weighted adjustment" value={cell.details.adjustment ? `${fixed(cell.details.adjustment.r)} / ${fixed(cell.details.adjustment.g)} / ${fixed(cell.details.adjustment.b)}` : "—"} />
+      </div>
+      <div className="grid gap-px border border-foreground/10 bg-foreground/10 sm:grid-cols-2">
+        {cell.details.history.length ? cell.details.history.map((entry) => (
+          <div key={entry.age} className="grid grid-cols-[3rem_3.5rem_1fr] gap-2 bg-background/70 px-3 py-2 font-mono text-[8px]">
+            <span className="text-primary">age {entry.age}</span>
+            <span className="tabular-nums">× {entry.weight.toFixed(3)}</span>
+            <span className="truncate tabular-nums text-muted-foreground">{fixed(entry.error.r)} / {fixed(entry.error.g)} / {fixed(entry.error.b)}</span>
+          </div>
+        )) : (
+          <p className="bg-background/70 px-3 py-4 font-mono text-[9px] text-muted-foreground sm:col-span-2">The first cell on a path has no earlier error.</p>
+        )}
       </div>
     </div>
   );
@@ -366,6 +482,15 @@ const stageFacts = (cell: QuantizationCellTrace): readonly string[] => {
   if (details.kind === "bayer") {
     return [mapped, `Mean sRGB color: ${rgbLabel(details.representativeSrgb)}.`, `Nearest palette indices: ${details.nearestPaletteIndex ?? "—"} and ${details.secondPaletteIndex ?? "—"}.`, `Mix value: ${details.mix?.toFixed(3) ?? "—"}. Threshold: ${details.threshold.toFixed(3)}.`, `Pixide stores palette ID ${cell.resultColorId}.`];
   }
+  if (details.kind === "blue-noise") {
+    return [mapped, `Mean sRGB color: ${rgbLabel(details.representativeSrgb)}.`, `Nearest palette indices: ${details.nearestPaletteIndex ?? "—"} and ${details.secondPaletteIndex ?? "—"}.`, `Mix value: ${details.mix?.toFixed(3) ?? "—"}.`, `Blue-noise rank ${details.matrixValue} gives threshold ${details.threshold.toFixed(3)}. Pixide stores palette ID ${cell.resultColorId}.`];
+  }
+  if (details.kind === "geometric-median") {
+    return [mapped, `Pixide groups ${details.samples.length} samples into 5-bit RGB bins.`, `Starting OKLab mean: ${details.initial ? `${fixed(details.initial.l)} / ${fixed(details.initial.a)} / ${fixed(details.initial.b)}` : "transparent"}.`, `${details.iterations.length} Weiszfeld iteration${details.iterations.length === 1 ? "" : "s"} moved toward the geometric median.`, `Final sRGB color: ${rgbLabel(details.representativeSrgb)}.`, `Pixide stores palette ID ${cell.resultColorId}.`];
+  }
+  if (details.kind === "riemersma") {
+    return [mapped, `This cell is position ${details.pathIndex + 1} on the Hilbert path.`, `${details.history.length} recent error${details.history.length === 1 ? "" : "s"} adjust the cell color.`, `Current linear RGB: ${details.currentLinear ? `${fixed(details.currentLinear.r)} / ${fixed(details.currentLinear.g)} / ${fixed(details.currentLinear.b)}` : "transparent"}.`, `The new quantization error is stored at full weight.`, `Pixide stores palette ID ${cell.resultColorId}.`];
+  }
   return [mapped, `Mean linear RGB before received error: ${details.representativeLinear ? `${fixed(details.representativeLinear.r)} / ${fixed(details.representativeLinear.g)} / ${fixed(details.representativeLinear.b)}` : "transparent"}.`, `Current linear RGB after received error: ${details.currentLinear ? `${fixed(details.currentLinear.r)} / ${fixed(details.currentLinear.g)} / ${fixed(details.currentLinear.b)}` : "—"}.`, `${details.deliveries.filter((delivery) => delivery.applied).length} later cells receive part of the error.`, `Pixide stores palette ID ${cell.resultColorId}.`];
 };
 
@@ -374,7 +499,7 @@ export function MethodExplorer({ method, onMethodChange }: MethodExplorerProps) 
   const definition = conversionMethodDefinition(method);
   const data = useMemo(() => methodTrace(method), [method]);
   const [stage, setStage] = useState(0);
-  const [selectedCell, setSelectedCell] = useState(method === "dither" || method === "atkinson" ? 0 : 5);
+  const [selectedCell, setSelectedCell] = useState(method === "dither" || method === "atkinson" || method === "riemersma" ? 0 : 5);
   const methodTabsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const container = methodTabsRef.current;
@@ -393,14 +518,25 @@ export function MethodExplorer({ method, onMethodChange }: MethodExplorerProps) 
   const deliveryTargets = cell.details.kind === "diffusion"
     ? new Set(cell.details.deliveries.filter((delivery) => delivery.applied).map((delivery) => delivery.y * 4 + delivery.x))
     : new Set<number>();
+  const sequential = cell.details.kind === "diffusion" || cell.details.kind === "riemersma";
+  const sequence = sequential
+    ? [...data.trace.cells].sort((a, b) => {
+        const aOrder = a.details.kind === "riemersma" ? a.details.pathIndex : a.index;
+        const bOrder = b.details.kind === "riemersma" ? b.details.pathIndex : b.index;
+        return aOrder - bOrder;
+      })
+    : data.trace.cells;
+  const selectedSequenceIndex = sequence.findIndex((traceCell) => traceCell.index === selectedCell);
+  const selectedOrder = cell.details.kind === "riemersma" ? cell.details.pathIndex : selectedCell;
 
   const outputPixels: LearningPixel[] = data.trace.cells.map((traceCell, index) => {
-    const complete = cell.details.kind === "diffusion" && index <= selectedCell;
+    const traceOrder = traceCell.details.kind === "riemersma" ? traceCell.details.pathIndex : index;
+    const complete = sequential && traceOrder <= selectedOrder;
     let color: string;
-    if (complete || cell.details.kind !== "diffusion") {
+    if (complete || !sequential) {
       const paletteColor = paletteById.get(traceCell.resultColorId);
       color = paletteColor ? `rgb(${paletteColor.r} ${paletteColor.g} ${paletteColor.b})` : "transparent";
-    } else if (traceCell.details.kind === "diffusion" && traceCell.details.representativeLinear) {
+    } else if ((traceCell.details.kind === "diffusion" || traceCell.details.kind === "riemersma") && traceCell.details.representativeLinear) {
       color = cssRgb({
         r: linearToSrgbByte(traceCell.details.representativeLinear.r),
         g: linearToSrgbByte(traceCell.details.representativeLinear.g),
@@ -433,9 +569,10 @@ export function MethodExplorer({ method, onMethodChange }: MethodExplorerProps) 
 
   const facts = stageFacts(cell);
   const match = getMatch(cell.details);
+  const resultPaletteIndex = TEACHING_PALETTE.findIndex((entry) => entry.id === cell.resultColorId);
   const selectedPaletteIndex = cell.details.kind === "dominant"
     ? cell.details.selectedPaletteIndex
-    : match?.nearestPaletteIndex ?? null;
+    : resultPaletteIndex >= 0 ? resultPaletteIndex : match?.nearestPaletteIndex ?? null;
 
   return (
     <section id="methods" className="relative scroll-mt-24 border-t border-foreground/10 pt-16 sm:pt-24">
@@ -550,11 +687,11 @@ export function MethodExplorer({ method, onMethodChange }: MethodExplorerProps) 
                 <div className="overflow-x-auto pb-2">
                   <PixelGrid width={4} height={4} pixels={outputPixels} label={`${definition.label} output example`} selectedIndex={selectedCell} onSelect={setSelectedCell} />
                 </div>
-                {cell.details.kind === "diffusion" ? (
+                {sequential ? (
                   <div className="mt-3 flex items-center justify-between gap-2 border-t border-foreground/10 pt-3">
-                    <Button variant="outline" size="xs" disabled={selectedCell === 0} onClick={() => setSelectedCell((value) => Math.max(0, value - 1))}>Previous pixel</Button>
-                    <span className="font-mono text-[9px] tabular-nums text-muted-foreground">scan {selectedCell + 1} / {data.trace.cells.length}</span>
-                    <Button variant="outline" size="xs" disabled={selectedCell === data.trace.cells.length - 1} onClick={() => setSelectedCell((value) => Math.min(data.trace.cells.length - 1, value + 1))}>Next pixel</Button>
+                    <Button variant="outline" size="xs" disabled={selectedSequenceIndex <= 0} onClick={() => setSelectedCell(sequence[Math.max(0, selectedSequenceIndex - 1)].index)}>Previous pixel</Button>
+                    <span className="font-mono text-[9px] tabular-nums text-muted-foreground">scan {selectedSequenceIndex + 1} / {sequence.length}</span>
+                    <Button variant="outline" size="xs" disabled={selectedSequenceIndex >= sequence.length - 1} onClick={() => setSelectedCell(sequence[Math.min(sequence.length - 1, selectedSequenceIndex + 1)].index)}>Next pixel</Button>
                   </div>
                 ) : null}
               </div>
@@ -566,7 +703,10 @@ export function MethodExplorer({ method, onMethodChange }: MethodExplorerProps) 
               {cell.details.kind === "median" ? <MedianAnalysis cell={cell} /> : null}
               {cell.details.kind === "center" ? <CenterAnalysis cell={cell} /> : null}
               {cell.details.kind === "bayer" ? <BayerAnalysis cell={cell} /> : null}
+              {cell.details.kind === "blue-noise" ? <BlueNoiseAnalysis cell={cell} /> : null}
+              {cell.details.kind === "geometric-median" ? <GeometricMedianAnalysis cell={cell} /> : null}
               {cell.details.kind === "diffusion" ? <DiffusionAnalysis cell={cell} /> : null}
+              {cell.details.kind === "riemersma" ? <RiemersmaAnalysis cell={cell} /> : null}
             </div>
           </div>
 

@@ -5,11 +5,14 @@ import {
   METHOD_ATKINSON,
   METHOD_AVERAGE,
   METHOD_BAYER,
+  METHOD_BLUE_NOISE,
   METHOD_CENTER,
   METHOD_DITHER,
   METHOD_DOMINANT,
+  METHOD_GEOMETRIC_MEDIAN,
   METHOD_INHERIT,
   METHOD_MEDIAN,
+  METHOD_RIEMERSMA,
   TRANSPARENT_COLOR_ID,
   convertImage,
   dimensionsForAspect,
@@ -106,6 +109,39 @@ describe("pixel conversion", () => {
     );
   });
 
+  it("uses a deterministic irregular threshold pattern for blue-noise dithering", () => {
+    const pixels = new Uint8ClampedArray(8 * 8 * 4);
+    for (let index = 0; index < 8 * 8; index += 1) {
+      pixels.set([137, 137, 137, 255], index * 4);
+    }
+    const blueNoiseOptions = {
+      ...conversionOptions("blue-noise"),
+      gridWidth: 8,
+      gridHeight: 8,
+    };
+    const bayerOptions = { ...blueNoiseOptions, method: "bayer" as const };
+    const first = [...convertImage(pixels, 8, 8, blueNoiseOptions).colorIds];
+    const second = [...convertImage(pixels, 8, 8, blueNoiseOptions).colorIds];
+
+    expect(first).toEqual(second);
+    expect(new Set(first)).toEqual(new Set([10, 20]));
+    expect(first).not.toEqual([...convertImage(pixels, 8, 8, bayerOptions).colorIds]);
+  });
+
+  it("follows a Hilbert path for Riemersma error diffusion", () => {
+    const result = convert(makeCellPattern(2), "riemersma");
+    expect(new Set(result)).toEqual(new Set([10, 20]));
+  });
+
+  it("uses an OKLab geometric median that resists one bright outlier", () => {
+    expect([...convert(makeCellPattern(1), "geometric-median")]).toEqual(
+      Array(16).fill(10),
+    );
+    expect([...convert(makeCellPattern(1), "average")]).toEqual(
+      Array(16).fill(20),
+    );
+  });
+
   it("preserves fully transparent cells", () => {
     const result = convert(new Uint8ClampedArray(8 * 8 * 4), "average");
     expect([...result]).toEqual(Array(16).fill(TRANSPARENT_COLOR_ID));
@@ -121,13 +157,13 @@ describe("pixel conversion", () => {
     ).toThrowError("Method overrides must match the output grid dimensions.");
 
     const invalidOverrides = new Uint8Array(16).fill(METHOD_INHERIT);
-    invalidOverrides[5] = METHOD_ATKINSON + 1;
+    invalidOverrides[5] = METHOD_GEOMETRIC_MEDIAN + 1;
     expect(() =>
       convertImage(pixels, 8, 8, {
         ...conversionOptions("average"),
         methodOverrides: invalidOverrides,
       }),
-    ).toThrowError(`Unknown conversion method code: ${METHOD_ATKINSON + 1}.`);
+    ).toThrowError(`Unknown conversion method code: ${METHOD_GEOMETRIC_MEDIAN + 1}.`);
   });
 
   it("selects conversion methods independently for mixed cells", () => {
@@ -185,10 +221,36 @@ describe("pixel conversion", () => {
     expect(separated[2]).toBe(isolated[2]);
   });
 
+  it("clears Riemersma history at a non-Riemersma cell", () => {
+    const isolatedOverrides = new Uint8Array(16).fill(METHOD_INHERIT);
+    isolatedOverrides[5] = METHOD_RIEMERSMA;
+    const isolated = convertImage(makeCellPattern(1), 8, 8, {
+      ...conversionOptions("average"),
+      methodOverrides: isolatedOverrides,
+    }).colorIds;
+
+    const separatedOverrides = new Uint8Array(16).fill(METHOD_INHERIT);
+    separatedOverrides[0] = METHOD_RIEMERSMA;
+    separatedOverrides[5] = METHOD_RIEMERSMA;
+    const separated = convertImage(makeCellPattern(1), 8, 8, {
+      ...conversionOptions("average"),
+      methodOverrides: separatedOverrides,
+    }).colorIds;
+
+    expect(separated[5]).toBe(isolated[5]);
+  });
+
   it("accepts every regional method code", () => {
     const methodOverrides = new Uint8Array(16).fill(METHOD_INHERIT);
     methodOverrides.set(
-      [METHOD_CENTER, METHOD_BAYER, METHOD_ATKINSON],
+      [
+        METHOD_CENTER,
+        METHOD_BAYER,
+        METHOD_ATKINSON,
+        METHOD_BLUE_NOISE,
+        METHOD_RIEMERSMA,
+        METHOD_GEOMETRIC_MEDIAN,
+      ],
       0,
     );
 

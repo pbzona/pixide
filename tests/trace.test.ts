@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseColor } from "@/lib/color";
+import { parseColor, srgbByteToLinear } from "@/lib/color";
 import {
   convertImage,
   traceImageConversion,
@@ -47,6 +47,9 @@ describe("image conversion traces", () => {
     "dither",
     "atkinson",
     "bayer",
+    "blue-noise",
+    "riemersma",
+    "geometric-median",
   ])("keeps traced %s output identical to production output", (method) => {
     const pixels = makePattern();
     const production = convertImage(pixels, 8, 8, options(method));
@@ -116,6 +119,71 @@ describe("image conversion traces", () => {
     if (atkinson.details.kind === "diffusion") {
       expect(atkinson.details.deliveries).toHaveLength(6);
       expect(atkinson.details.deliveries.every((delivery) => delivery.weight === 1 / 8)).toBe(true);
+    }
+  });
+
+  it("records blue-noise ranks, Hilbert order, and geometric-median convergence", () => {
+    const pixels = makePattern();
+    const blueNoise = traceImageConversion(pixels, 8, 8, options("blue-noise"));
+    const riemersma = traceImageConversion(pixels, 8, 8, options("riemersma"));
+    const geometricMedian = traceImageConversion(pixels, 8, 8, options("geometric-median"));
+
+    expect(blueNoise.cells[0].details.kind).toBe("blue-noise");
+    if (blueNoise.cells[0].details.kind === "blue-noise") {
+      expect(blueNoise.cells[0].details.matrixValue).toBe(7);
+      expect(blueNoise.cells[0].details.threshold).toBeCloseTo(7.5 / 64);
+    }
+
+    const path = riemersma.cells
+      .map((cell) => cell.details.kind === "riemersma" ? cell.details.pathIndex : -1)
+      .sort((a, b) => a - b);
+    expect(path).toEqual(Array.from({ length: 16 }, (_, index) => index));
+    expect(riemersma.cells.some((cell) => cell.details.kind === "riemersma" && cell.details.history.length > 0)).toBe(true);
+    const adjustedRiemersmaCell = riemersma.cells.find(
+      (cell) => cell.details.kind === "riemersma" && cell.details.history.length > 0,
+    );
+    if (adjustedRiemersmaCell?.details.kind === "riemersma") {
+      const details = adjustedRiemersmaCell.details;
+      expect(details.error?.r).toBeCloseTo(
+        details.representativeLinear!.r - srgbByteToLinear(
+          palette[details.selectedPaletteIndex!].color.r,
+        ),
+      );
+    }
+
+    expect(geometricMedian.cells[0].details.kind).toBe("geometric-median");
+    if (geometricMedian.cells[0].details.kind === "geometric-median") {
+      expect(geometricMedian.cells[0].details.initial).not.toBeNull();
+      expect(geometricMedian.cells[0].details.iterations.length).toBeGreaterThan(0);
+      expect(geometricMedian.cells[0].details.median).not.toBeNull();
+    }
+  });
+
+  it("clears Riemersma history across gaps in a padded rectangular curve", () => {
+    const pixels = new Uint8ClampedArray(5 * 8 * 4);
+    for (let index = 0; index < 5 * 8; index += 1) {
+      pixels.set([128, 128, 128, 255], index * 4);
+    }
+    const trace = traceImageConversion(pixels, 5, 8, {
+      ...options("riemersma"),
+      gridWidth: 5,
+      gridHeight: 8,
+    });
+    const path = [...trace.cells].sort((a, b) => {
+      const aIndex = a.details.kind === "riemersma" ? a.details.pathIndex : -1;
+      const bIndex = b.details.kind === "riemersma" ? b.details.pathIndex : -1;
+      return aIndex - bIndex;
+    });
+
+    const gapIndex = path.findIndex((cell, index) => {
+      if (index === 0) return false;
+      const previous = path[index - 1];
+      return Math.abs(cell.x - previous.x) + Math.abs(cell.y - previous.y) !== 1;
+    });
+    expect(gapIndex).toBeGreaterThan(0);
+    expect(path[gapIndex].details.kind).toBe("riemersma");
+    if (path[gapIndex].details.kind === "riemersma") {
+      expect(path[gapIndex].details.history).toHaveLength(0);
     }
   });
 });

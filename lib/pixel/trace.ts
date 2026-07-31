@@ -2,6 +2,7 @@ import type { PaletteMatchInspection } from "./matcher";
 import type { ConversionMethod, ConversionResult } from "./types";
 
 export type TraceRgb = Readonly<{ r: number; g: number; b: number }>;
+export type TraceOklab = Readonly<{ l: number; a: number; b: number }>;
 
 export type TraceSourceSample = Readonly<{
   x: number;
@@ -73,6 +74,31 @@ export type BayerTraceDetails = Readonly<{
   threshold: number;
 }>;
 
+export type BlueNoiseTraceDetails = Readonly<{
+  kind: "blue-noise";
+  samples: readonly TraceSourceSample[];
+  transparentCount: number;
+  representativeLinear: TraceRgb | null;
+  representativeSrgb: TraceRgb | null;
+  match: PaletteMatchInspection | null;
+  nearestPaletteIndex: number | null;
+  secondPaletteIndex: number | null;
+  mix: number | null;
+  matrixValue: number;
+  threshold: number;
+}>;
+
+export type GeometricMedianTraceDetails = Readonly<{
+  kind: "geometric-median";
+  samples: readonly TraceSourceSample[];
+  transparentCount: number;
+  initial: TraceOklab | null;
+  iterations: readonly TraceOklab[];
+  median: TraceOklab | null;
+  representativeSrgb: TraceRgb | null;
+  match: PaletteMatchInspection | null;
+}>;
+
 export type DiffusionDelivery = Readonly<{
   x: number;
   y: number;
@@ -95,13 +121,37 @@ export type DiffusionTraceDetails = Readonly<{
   propagatedWeight: number;
 }>;
 
+export type RiemersmaHistoryEntry = Readonly<{
+  age: number;
+  weight: number;
+  error: TraceRgb;
+}>;
+
+export type RiemersmaTraceDetails = Readonly<{
+  kind: "riemersma";
+  pathIndex: number;
+  samples: readonly TraceSourceSample[];
+  transparentCount: number;
+  representativeLinear: TraceRgb | null;
+  adjustment: TraceRgb | null;
+  currentLinear: TraceRgb | null;
+  currentSrgb: TraceRgb | null;
+  match: PaletteMatchInspection | null;
+  selectedPaletteIndex: number | null;
+  error: TraceRgb | null;
+  history: readonly RiemersmaHistoryEntry[];
+}>;
+
 export type QuantizationTraceDetails =
   | DominantTraceDetails
   | AverageTraceDetails
   | MedianTraceDetails
   | CenterTraceDetails
   | BayerTraceDetails
-  | DiffusionTraceDetails;
+  | BlueNoiseTraceDetails
+  | GeometricMedianTraceDetails
+  | DiffusionTraceDetails
+  | RiemersmaTraceDetails;
 
 export type QuantizationCellTrace = Readonly<{
   index: number;

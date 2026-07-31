@@ -7,7 +7,10 @@ export type ConversionMethod =
   | "dither"
   | "center"
   | "bayer"
-  | "atkinson";
+  | "atkinson"
+  | "blue-noise"
+  | "riemersma"
+  | "geometric-median";
 
 export type InputAdjustments = Readonly<{
   exposure: number;
@@ -33,6 +36,9 @@ export const METHOD_DITHER = 3;
 export const METHOD_CENTER = 4;
 export const METHOD_BAYER = 5;
 export const METHOD_ATKINSON = 6;
+export const METHOD_BLUE_NOISE = 7;
+export const METHOD_RIEMERSMA = 8;
+export const METHOD_GEOMETRIC_MEDIAN = 9;
 
 export const conversionMethodCode = (method: ConversionMethod): number => {
   switch (method) {
@@ -50,6 +56,12 @@ export const conversionMethodCode = (method: ConversionMethod): number => {
       return METHOD_BAYER;
     case "atkinson":
       return METHOD_ATKINSON;
+    case "blue-noise":
+      return METHOD_BLUE_NOISE;
+    case "riemersma":
+      return METHOD_RIEMERSMA;
+    case "geometric-median":
+      return METHOD_GEOMETRIC_MEDIAN;
   }
 };
 
@@ -69,6 +81,12 @@ export const conversionMethodFromCode = (code: number): ConversionMethod => {
       return "bayer";
     case METHOD_ATKINSON:
       return "atkinson";
+    case METHOD_BLUE_NOISE:
+      return "blue-noise";
+    case METHOD_RIEMERSMA:
+      return "riemersma";
+    case METHOD_GEOMETRIC_MEDIAN:
+      return "geometric-median";
     default:
       throw new RangeError(`Unknown conversion method code: ${code}`);
   }
