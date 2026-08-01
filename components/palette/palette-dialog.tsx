@@ -11,7 +11,9 @@ import {
   LoaderCircle,
   Plus,
   Search,
+  SlidersHorizontal,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -166,15 +168,23 @@ export function PaletteDialog({
     useState<PaletteTownPagination>(EMPTY_PAGINATION);
   const [remoteTags, setRemoteTags] = useState<readonly PaletteTownTag[]>([]);
   const [remoteQuery, setRemoteQuery] = useState("");
-  const [remoteTag, setRemoteTag] = useState("all");
+  const [remoteSelectedTags, setRemoteSelectedTags] = useState<readonly string[]>([]);
+  const [remoteMinColors, setRemoteMinColors] = useState("");
+  const [remoteMaxColors, setRemoteMaxColors] = useState("");
+  const [remoteColor, setRemoteColor] = useState("");
+  const [remoteColorTolerance, setRemoteColorTolerance] = useState("3");
+  const [remoteHue, setRemoteHue] = useState("");
+  const [remoteHueTolerance, setRemoteHueTolerance] = useState("15");
   const [remoteSort, setRemoteSort] = useState<PaletteTownSort>("popularity");
   const [remotePage, setRemotePage] = useState(1);
+  const [remoteFiltersOpen, setRemoteFiltersOpen] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [remoteRequest, setRemoteRequest] = useState(0);
+  const [activeTab, setActiveTab] = useState("library");
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || activeTab !== "palette-town") return;
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => {
@@ -182,7 +192,13 @@ export function PaletteDialog({
         setRemoteError(null);
         const params = serializePaletteTownQuery({
           ...(remoteQuery.trim() ? { q: remoteQuery.trim() } : {}),
-          ...(remoteTag !== "all" ? { tags: [remoteTag] } : {}),
+          ...(remoteSelectedTags.length > 0 ? { tags: remoteSelectedTags } : {}),
+          ...(remoteMinColors ? { minColors: Number(remoteMinColors) } : {}),
+          ...(remoteMaxColors ? { maxColors: Number(remoteMaxColors) } : {}),
+          ...(remoteColor ? { color: remoteColor } : {}),
+          ...(remoteColor ? { colorTolerance: Number(remoteColorTolerance) } : {}),
+          ...(remoteHue ? { hue: Number(remoteHue) } : {}),
+          ...(remoteHue ? { hueTolerance: Number(remoteHueTolerance) } : {}),
           sort: remoteSort,
           page: remotePage,
           pageSize: 12,
@@ -215,16 +231,30 @@ export function PaletteDialog({
             if (!controller.signal.aborted) setRemoteLoading(false);
           });
       },
-      remoteQuery ? 250 : 0,
+      250,
     );
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [open, remotePage, remoteQuery, remoteRequest, remoteSort, remoteTag]);
+  }, [
+    activeTab,
+    open,
+    remoteColor,
+    remoteColorTolerance,
+    remoteHue,
+    remoteHueTolerance,
+    remoteMaxColors,
+    remoteMinColors,
+    remotePage,
+    remoteQuery,
+    remoteRequest,
+    remoteSelectedTags,
+    remoteSort,
+  ]);
 
   useEffect(() => {
-    if (!open || remoteTags.length > 0) return;
+    if (!open || activeTab !== "palette-town" || remoteTags.length > 0) return;
     const controller = new AbortController();
     void fetch("/api/palette-tags", { signal: controller.signal })
       .then(async (response) => {
@@ -234,7 +264,24 @@ export function PaletteDialog({
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [open, remoteTags.length]);
+  }, [activeTab, open, remoteTags.length]);
+
+  const advancedFilterCount =
+    remoteSelectedTags.length +
+    Number(Boolean(remoteMinColors || remoteMaxColors)) +
+    Number(Boolean(remoteColor)) +
+    Number(Boolean(remoteHue));
+
+  const clearRemoteFilters = () => {
+    setRemoteSelectedTags([]);
+    setRemoteMinColors("");
+    setRemoteMaxColors("");
+    setRemoteColor("");
+    setRemoteColorTolerance("3");
+    setRemoteHue("");
+    setRemoteHueTolerance("15");
+    setRemotePage(1);
+  };
 
   const updateSelected = () => {
     if (selectedSwatch === null) {
@@ -286,9 +333,10 @@ export function PaletteDialog({
           <DialogDescription>Choose, import, or tune the colors used by every pixel.</DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="library" className="min-h-0 gap-0">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-0 gap-0">
           <TabsList variant="line" className="mx-5 mt-2">
             <TabsTrigger value="library">Library</TabsTrigger>
+            <TabsTrigger value="palette-town">Palette Town</TabsTrigger>
             <TabsTrigger value="edit">Edit current</TabsTrigger>
             <TabsTrigger value="import">Import</TabsTrigger>
           </TabsList>
@@ -312,148 +360,295 @@ export function PaletteDialog({
                         onSelect={() => choosePalette(palette)}
                       />
                     ))}
-                <button
-                  type="button"
-                  className="grid min-h-28 place-items-center border border-dashed text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
-                  onClick={() => {
-                    setSelectedSwatch(null);
-                    setEditColor("#ef6a47");
-                    setError(null);
-                    onCreate();
-                    onOpenChange(false);
-                  }}
-                >
-                  <span className="flex items-center gap-2">
-                    <Plus className="size-4" /> New palette
-                  </span>
-                </button>
-                  </div>
-                </section>
-
-                <section className="border-t pt-5">
-                  <div className="mb-3">
-                    <h3 className="text-sm font-medium">Palette Town</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Community palettes load on demand and stay local only when edited.
-                    </p>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                    <label className="relative">
-                      <Search className="pointer-events-none absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
-                      <Input
-                        value={remoteQuery}
-                        className="pl-8"
-                        placeholder="Search palettes"
-                        aria-label="Search Palette Town"
-                        onChange={(event) => {
-                          setRemoteQuery(event.target.value);
-                          if (!event.target.value.trim() && remoteSort === "relevance") {
-                            setRemoteSort("popularity");
-                          }
-                          setRemotePage(1);
-                        }}
-                      />
-                    </label>
-                    <Select
-                      value={remoteTag}
-                      onValueChange={(value: string) => {
-                        setRemoteTag(value);
-                        setRemotePage(1);
+                    <button
+                      type="button"
+                      className="grid min-h-28 place-items-center border border-dashed text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+                      onClick={() => {
+                        setSelectedSwatch(null);
+                        setEditColor("#ef6a47");
+                        setError(null);
+                        onCreate();
+                        onOpenChange(false);
                       }}
                     >
-                      <SelectTrigger className="w-full sm:w-36" aria-label="Filter by tag">
-                        <SelectValue placeholder="All tags" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All tags</SelectItem>
-                        {remoteTags.map((tag) => (
-                          <SelectItem key={tag.name} value={tag.name}>
-                            {tag.name} ({tag.paletteCount})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={remoteSort}
-                      onValueChange={(value: string) => {
-                        setRemoteSort(value as PaletteTownSort);
-                        setRemotePage(1);
-                      }}
-                    >
-                      <SelectTrigger className="w-full sm:w-32" aria-label="Sort palettes">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {remoteQuery.trim() ? (
-                          <SelectItem value="relevance">Relevance</SelectItem>
-                        ) : null}
-                        <SelectItem value="popularity">Popular</SelectItem>
-                        <SelectItem value="recency">Recent</SelectItem>
-                        <SelectItem value="name">Name</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {remoteError ? (
-                    <div className="mt-3 border border-destructive/40 p-4 text-sm" role="alert">
-                      <p>{remoteError}</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-3"
-                        onClick={() => setRemoteRequest((request) => request + 1)}
-                      >
-                        Retry
-                      </Button>
-                    </div>
-                  ) : remoteLoading && remotePalettes.length === 0 ? (
-                    <div className="grid min-h-32 place-items-center text-sm text-muted-foreground">
                       <span className="flex items-center gap-2">
-                        <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
-                        Loading Palette Town
+                        <Plus className="size-4" /> New palette
                       </span>
-                    </div>
-                  ) : remotePalettes.length === 0 ? (
-                    <div className="grid min-h-32 place-items-center text-sm text-muted-foreground">
-                      No palettes match these filters.
-                    </div>
-                  ) : (
-                    <div className={cn("mt-3 grid gap-2 sm:grid-cols-2", remoteLoading && "opacity-60")}>
-                      {remotePalettes.map((palette) => (
-                        <PaletteCard
-                          key={paletteIdentity(palette)}
-                          palette={palette}
-                          active={paletteIdentity(activePalette) === paletteIdentity(palette)}
-                          onSelect={() => choosePalette(palette)}
-                        />
-                      ))}
-                    </div>
-                  )}
-
-                  {remotePagination.totalPages > 1 ? (
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={remoteLoading || remotePage <= 1}
-                        onClick={() => setRemotePage((page) => Math.max(1, page - 1))}
-                      >
-                        <ArrowLeft data-icon="inline-start" /> Previous
-                      </Button>
-                      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                        Page {remotePagination.page} of {remotePagination.totalPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={remoteLoading || remotePage >= remotePagination.totalPages}
-                        onClick={() => setRemotePage((page) => page + 1)}
-                      >
-                        Next <ArrowRight data-icon="inline-end" />
-                      </Button>
-                    </div>
-                  ) : null}
+                    </button>
+                  </div>
                 </section>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="palette-town" className="min-h-0">
+            <ScrollArea className="h-[52svh] max-h-[470px]">
+              <div className="p-5">
+                <div className="mb-4">
+                  <h3 className="text-sm font-medium">Discover palettes</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Search by name, tags, color count, hue, or a matching color.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                  <label className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                    <Input
+                      value={remoteQuery}
+                      className="pl-8"
+                      placeholder="Search names and tags"
+                      aria-label="Search Palette Town"
+                      onChange={(event) => {
+                        const nextQuery = event.target.value;
+                        setRemoteQuery(nextQuery);
+                        if (nextQuery.trim() && !remoteQuery.trim()) {
+                          setRemoteSort("relevance");
+                        } else if (!nextQuery.trim() && remoteSort === "relevance") {
+                          setRemoteSort("popularity");
+                        }
+                        setRemotePage(1);
+                      }}
+                    />
+                  </label>
+                  <Select
+                    value={remoteSort}
+                    onValueChange={(value: string) => {
+                      setRemoteSort(value as PaletteTownSort);
+                      setRemotePage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-32" aria-label="Sort palettes">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {remoteQuery.trim() ? (
+                        <SelectItem value="relevance">Relevance</SelectItem>
+                      ) : null}
+                      <SelectItem value="popularity">Popular</SelectItem>
+                      <SelectItem value="recency">Recent</SelectItem>
+                      <SelectItem value="name">Name</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    aria-expanded={remoteFiltersOpen}
+                    onClick={() => setRemoteFiltersOpen((current) => !current)}
+                  >
+                    <SlidersHorizontal data-icon="inline-start" />
+                    Filters{advancedFilterCount ? ` (${advancedFilterCount})` : ""}
+                  </Button>
+                </div>
+
+                {remoteFiltersOpen ? (
+                  <div className="mt-3 space-y-4 border bg-muted/20 p-3">
+                    <fieldset>
+                      <legend className="mb-2 text-xs font-medium">Tags match all selected</legend>
+                      {remoteTags.length > 0 ? (
+                        <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+                          {remoteTags.map((tag) => {
+                            const selected = remoteSelectedTags.includes(tag.name);
+                            return (
+                              <button
+                                type="button"
+                                key={tag.name}
+                                aria-pressed={selected}
+                                disabled={!selected && remoteSelectedTags.length >= 10}
+                                className={cn(
+                                  "border px-2 py-1 text-[11px] transition-colors",
+                                  "disabled:cursor-not-allowed disabled:opacity-40",
+                                  selected
+                                    ? "border-foreground bg-foreground text-background"
+                                    : "hover:bg-muted",
+                                )}
+                                onClick={() => {
+                                  setRemoteSelectedTags((current) =>
+                                    current.includes(tag.name)
+                                      ? current.filter((name) => name !== tag.name)
+                                      : [...current, tag.name],
+                                  );
+                                  setRemotePage(1);
+                                }}
+                              >
+                                {tag.name} <span className="opacity-60">{tag.paletteCount}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Tags are unavailable.</p>
+                      )}
+                    </fieldset>
+
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <fieldset>
+                        <legend className="mb-2 text-xs font-medium">Color count</legend>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={64}
+                            value={remoteMinColors}
+                            placeholder="Min"
+                            aria-label="Minimum colors"
+                            onChange={(event) => {
+                              setRemoteMinColors(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                          <Input
+                            type="number"
+                            min={1}
+                            max={64}
+                            value={remoteMaxColors}
+                            placeholder="Max"
+                            aria-label="Maximum colors"
+                            onChange={(event) => {
+                              setRemoteMaxColors(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                        </div>
+                      </fieldset>
+
+                      <fieldset>
+                        <legend className="mb-2 text-xs font-medium">Matching color</legend>
+                        <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                          <Input
+                            value={remoteColor}
+                            placeholder="#ff6b4a"
+                            aria-label="Matching color"
+                            onChange={(event) => {
+                              setRemoteColor(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                          <Input
+                            type="number"
+                            min={0}
+                            max={25}
+                            step={0.5}
+                            disabled={!remoteColor}
+                            value={remoteColorTolerance}
+                            aria-label="Color tolerance"
+                            title="Color tolerance"
+                            onChange={(event) => {
+                              setRemoteColorTolerance(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                        </div>
+                      </fieldset>
+
+                      <fieldset>
+                        <legend className="mb-2 text-xs font-medium">Hue in degrees</legend>
+                        <div className="grid grid-cols-[1fr_4.5rem] gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={359.9}
+                            step={1}
+                            value={remoteHue}
+                            placeholder="0–359"
+                            aria-label="Hue"
+                            onChange={(event) => {
+                              setRemoteHue(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                          <Input
+                            type="number"
+                            min={0}
+                            max={180}
+                            step={1}
+                            disabled={!remoteHue}
+                            value={remoteHueTolerance}
+                            aria-label="Hue tolerance"
+                            title="Hue tolerance"
+                            onChange={(event) => {
+                              setRemoteHueTolerance(event.target.value);
+                              setRemotePage(1);
+                            }}
+                          />
+                        </div>
+                      </fieldset>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 border-t pt-3">
+                      <p className="text-[10px] text-muted-foreground">
+                        Tolerances use perceptual color distance and circular hue distance.
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        disabled={advancedFilterCount === 0}
+                        onClick={clearRemoteFilters}
+                      >
+                        <X data-icon="inline-start" /> Clear filters
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {remoteError ? (
+                  <div className="mt-3 border border-destructive/40 p-4 text-sm" role="alert">
+                    <p>{remoteError}</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => setRemoteRequest((request) => request + 1)}
+                    >
+                      Retry
+                    </Button>
+                  </div>
+                ) : remoteLoading && remotePalettes.length === 0 ? (
+                  <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">
+                    <span className="flex items-center gap-2">
+                      <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                      Loading Palette Town
+                    </span>
+                  </div>
+                ) : remotePalettes.length === 0 ? (
+                  <div className="grid min-h-40 place-items-center text-sm text-muted-foreground">
+                    No palettes match these filters.
+                  </div>
+                ) : (
+                  <div className={cn("mt-3 grid gap-2 sm:grid-cols-2", remoteLoading && "opacity-60")}>
+                    {remotePalettes.map((palette) => (
+                      <PaletteCard
+                        key={paletteIdentity(palette)}
+                        palette={palette}
+                        active={paletteIdentity(activePalette) === paletteIdentity(palette)}
+                        onSelect={() => choosePalette(palette)}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {remotePagination.totalPages > 1 ? (
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={remoteLoading || remotePage <= 1}
+                      onClick={() => setRemotePage((page) => Math.max(1, page - 1))}
+                    >
+                      <ArrowLeft data-icon="inline-start" /> Previous
+                    </Button>
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      Page {remotePagination.page} of {remotePagination.totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={remoteLoading || remotePage >= remotePagination.totalPages}
+                      onClick={() => setRemotePage((page) => page + 1)}
+                    >
+                      Next <ArrowRight data-icon="inline-end" />
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </ScrollArea>
           </TabsContent>

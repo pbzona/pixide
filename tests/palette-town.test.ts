@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendSwatch,
   paletteIdentity,
+  paletteTownCacheKey,
   parsePaletteTownList,
   parsePaletteTownQuery,
   serializePaletteTownQuery,
@@ -28,13 +29,21 @@ const remotePalette = {
 describe("Palette Town queries", () => {
   it("normalizes and serializes supported discovery parameters", () => {
     const parsed = parsePaletteTownQuery(
-      new URLSearchParams("q= arcade &tag=Retro&tag=dark&sort=relevance&page=2&pageSize=12"),
+      new URLSearchParams(
+        "q= arcade &tag=Retro&tag=dark&minColors=4&maxColors=16&hue=355&hueTolerance=20&color=%23ff6600&colorTolerance=4.5&sort=relevance&page=2&pageSize=12",
+      ),
     );
     expect(parsed).toEqual({
       ok: true,
       value: {
         q: "arcade",
         tags: ["retro", "dark"],
+        minColors: 4,
+        maxColors: 16,
+        hue: 355,
+        hueTolerance: 20,
+        color: "#ff6600",
+        colorTolerance: 4.5,
         sort: "relevance",
         page: 2,
         pageSize: 12,
@@ -42,19 +51,35 @@ describe("Palette Town queries", () => {
     });
     if (!parsed.ok) return;
     expect(serializePaletteTownQuery(parsed.value).toString()).toBe(
-      "q=arcade&tag=retro&tag=dark&sort=relevance&page=2&pageSize=12",
+      "q=arcade&tag=dark&tag=retro&minColors=4&maxColors=16&hue=355&hueTolerance=20&color=%23ff6600&colorTolerance=4.5&sort=relevance&page=2&pageSize=12",
     );
   });
 
-  it("rejects unknown parameters and relevance without a query", () => {
-    expect(parsePaletteTownQuery(new URLSearchParams("color=%23fff"))).toEqual({
+  it("rejects unknown and invalid dependent parameters", () => {
+    expect(parsePaletteTownQuery(new URLSearchParams("owner=phil"))).toEqual({
       ok: false,
-      error: "Unknown parameter: color.",
+      error: "Unknown parameter: owner.",
     });
     expect(parsePaletteTownQuery(new URLSearchParams("sort=relevance"))).toEqual({
       ok: false,
       error: "relevance sorting requires a search query.",
     });
+    expect(parsePaletteTownQuery(new URLSearchParams("hueTolerance=10"))).toEqual({
+      ok: false,
+      error: "hueTolerance requires hue.",
+    });
+    expect(parsePaletteTownQuery(new URLSearchParams("minColors=20&maxColors=10"))).toEqual({
+      ok: false,
+      error: "minColors cannot exceed maxColors.",
+    });
+  });
+
+  it("builds stable runtime-cache keys from canonical searches", () => {
+    const first = serializePaletteTownQuery({ tags: ["retro", "dark"], page: 1 });
+    const second = serializePaletteTownQuery({ tags: ["dark", "retro"], page: 1 });
+    expect(paletteTownCacheKey("https://palette.example/", "api/v1/palettes", first)).toBe(
+      paletteTownCacheKey("https://palette.example", "api/v1/palettes", second),
+    );
   });
 });
 

@@ -27,6 +27,8 @@ PALETTE_TOWN_API_KEY=replace-with-a-key-of-at-least-32-characters
 
 The key is server-only. Do not expose it through a `NEXT_PUBLIC_` environment variable.
 
+Palette searches use Vercel Runtime Cache for 60 seconds and tags for 5 minutes. Entries carry the shared `palette-town` tag plus either `palette-town:palettes` or `palette-town:tags` for targeted invalidation.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

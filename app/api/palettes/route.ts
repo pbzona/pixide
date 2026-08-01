@@ -17,6 +17,7 @@ export async function GET(request: Request) {
     const body = await fetchPaletteTown(
       "api/v1/palettes",
       serializePaletteTownQuery(parsedQuery.value),
+      (value) => parsePaletteTownList(value).ok,
     );
     const parsedBody = parsePaletteTownList(body);
     if (!parsedBody.ok) {

@@ -5,7 +5,11 @@ import { fetchPaletteTown, PaletteTownError } from "@/lib/palette/palette-town-s
 
 export async function GET() {
   try {
-    const body = await fetchPaletteTown("api/v1/tags");
+    const body = await fetchPaletteTown(
+      "api/v1/tags",
+      undefined,
+      (value) => parsePaletteTownTags(value).ok,
+    );
     const parsedBody = parsePaletteTownTags(body);
     if (!parsedBody.ok) {
       return NextResponse.json({ error: "Palette Town returned invalid data." }, { status: 502 });
