@@ -2,7 +2,7 @@ import { createPalette } from "./create";
 import type { Palette } from "./types";
 
 const definePalette = (id: string, name: string, colors: readonly string[]): Palette => {
-  const result = createPalette(id, name, colors, true);
+  const result = createPalette(id, name, colors, "builtin");
   if (!result.ok) throw new Error(result.error);
   return result.value;
 };

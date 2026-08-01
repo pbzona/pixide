@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -8,7 +8,9 @@ import {
   Copy,
   FileUp,
   ImageIcon,
+  LoaderCircle,
   Plus,
+  Search,
   Trash2,
 } from "lucide-react";
 
@@ -23,15 +25,29 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DEFAULT_PALETTES,
   appendSwatch,
   moveSwatch,
+  paletteIdentity,
+  parsePaletteTownList,
+  parsePaletteTownTags,
   removeSwatch,
   replaceSwatch,
+  serializePaletteTownQuery,
   type Palette,
+  type PaletteTownPagination,
+  type PaletteTownSort,
+  type PaletteTownTag,
 } from "@/lib/palette";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +63,84 @@ type PaletteDialogProps = Readonly<{
   onDelete: () => void;
   onImport: (file: File, colorCount: number) => Promise<void>;
 }>;
+
+const EMPTY_PAGINATION: PaletteTownPagination = {
+  page: 1,
+  pageSize: 12,
+  totalItems: 0,
+  totalPages: 0,
+};
+
+type PaletteCardProps = Readonly<{
+  palette: Palette;
+  active: boolean;
+  onSelect: () => void;
+}>;
+
+function PaletteCard({ palette, active, onSelect }: PaletteCardProps) {
+  return (
+    <div
+      className={cn(
+        "group border transition-colors hover:bg-muted/60",
+        active && "border-foreground",
+      )}
+    >
+      <button
+        type="button"
+        className="block w-full p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        aria-pressed={active}
+        onClick={onSelect}
+      >
+        <span className="mb-3 flex items-center justify-between text-sm font-medium">
+          <span className="truncate">{palette.name}</span>
+          {active ? <Check className="size-4 shrink-0" /> : null}
+        </span>
+        <span className="flex h-8 overflow-hidden border border-white/10">
+          {palette.colors.map((swatch) => (
+            <span
+              key={swatch.id}
+              className="h-full min-w-2 flex-1"
+              style={{ backgroundColor: swatch.hex }}
+            />
+          ))}
+        </span>
+        <span className="mt-2 block font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+          {palette.colors.length} colors
+          {palette.tags?.length ? ` · ${palette.tags.slice(0, 2).join(" · ")}` : ""}
+        </span>
+      </button>
+      {palette.author || palette.attribution?.license ? (
+        <div className="flex min-w-0 gap-1 px-3 pb-3 text-[10px] text-muted-foreground">
+          {palette.author?.url ? (
+            <a
+              href={palette.author.url}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate underline-offset-2 hover:underline"
+            >
+              By {palette.author.name}
+            </a>
+          ) : palette.author ? (
+            <span className="truncate">By {palette.author.name}</span>
+          ) : null}
+          {palette.attribution?.license ? <span>·</span> : null}
+          {palette.attribution?.url ? (
+            <a
+              href={palette.attribution.url}
+              target="_blank"
+              rel="noreferrer"
+              className="shrink-0 underline-offset-2 hover:underline"
+            >
+              {palette.attribution.license}
+            </a>
+          ) : palette.attribution?.license ? (
+            <span>{palette.attribution.license}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function PaletteDialog({
   open,
@@ -67,6 +161,80 @@ export function PaletteDialog({
   const [importing, setImporting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [remotePalettes, setRemotePalettes] = useState<readonly Palette[]>([]);
+  const [remotePagination, setRemotePagination] =
+    useState<PaletteTownPagination>(EMPTY_PAGINATION);
+  const [remoteTags, setRemoteTags] = useState<readonly PaletteTownTag[]>([]);
+  const [remoteQuery, setRemoteQuery] = useState("");
+  const [remoteTag, setRemoteTag] = useState("all");
+  const [remoteSort, setRemoteSort] = useState<PaletteTownSort>("popularity");
+  const [remotePage, setRemotePage] = useState(1);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteRequest, setRemoteRequest] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => {
+        setRemoteLoading(true);
+        setRemoteError(null);
+        const params = serializePaletteTownQuery({
+          ...(remoteQuery.trim() ? { q: remoteQuery.trim() } : {}),
+          ...(remoteTag !== "all" ? { tags: [remoteTag] } : {}),
+          sort: remoteSort,
+          page: remotePage,
+          pageSize: 12,
+        });
+        void fetch(`/api/palettes?${params}`, { signal: controller.signal })
+          .then(async (response) => {
+            const body: unknown = await response.json();
+            if (!response.ok) {
+              throw new Error(
+                typeof body === "object" &&
+                body !== null &&
+                "error" in body &&
+                typeof body.error === "string"
+                  ? body.error
+                  : "Palette Town is unavailable.",
+              );
+            }
+            const parsed = parsePaletteTownList(body);
+            if (!parsed.ok) throw new Error(parsed.error);
+            setRemotePalettes(parsed.value.palettes);
+            setRemotePagination(parsed.value.pagination);
+          })
+          .catch((fetchError: unknown) => {
+            if (controller.signal.aborted) return;
+            setRemoteError(
+              fetchError instanceof Error ? fetchError.message : "Palette Town is unavailable.",
+            );
+          })
+          .finally(() => {
+            if (!controller.signal.aborted) setRemoteLoading(false);
+          });
+      },
+      remoteQuery ? 250 : 0,
+    );
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [open, remotePage, remoteQuery, remoteRequest, remoteSort, remoteTag]);
+
+  useEffect(() => {
+    if (!open || remoteTags.length > 0) return;
+    const controller = new AbortController();
+    void fetch("/api/palette-tags", { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const parsed = parsePaletteTownTags(await response.json());
+        if (parsed.ok) setRemoteTags(parsed.value);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [open, remoteTags.length]);
 
   const updateSelected = () => {
     if (selectedSwatch === null) {
@@ -81,6 +249,14 @@ export function PaletteDialog({
   };
 
   const palettes = [...DEFAULT_PALETTES, ...customPalettes];
+
+  const choosePalette = (palette: Palette) => {
+    setSelectedSwatch(null);
+    setEditColor("#ef6a47");
+    setError(null);
+    onSelect(palette);
+    onOpenChange(false);
+  };
 
   const importFile = async (file: File) => {
     if (importing) return;
@@ -119,50 +295,23 @@ export function PaletteDialog({
 
           <TabsContent value="library" className="min-h-0">
             <ScrollArea className="h-[52svh] max-h-[470px]">
-              <div className="grid gap-2 p-5 sm:grid-cols-2">
-                {palettes.map((palette) => (
-                  <button
-                    type="button"
-                    key={`${palette.builtIn ? "built-in" : "custom"}-${palette.id}`}
-                    className={cn(
-                      "group border p-3 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      activePalette.id === palette.id &&
-                        activePalette.builtIn === palette.builtIn &&
-                        "border-foreground",
-                    )}
-                    aria-pressed={
-                      activePalette.id === palette.id &&
-                      activePalette.builtIn === palette.builtIn
-                    }
-                    onClick={() => {
-                      setSelectedSwatch(null);
-                      setEditColor("#ef6a47");
-                      setError(null);
-                      onSelect(palette);
-                      onOpenChange(false);
-                    }}
-                  >
-                    <span className="mb-3 flex items-center justify-between text-sm font-medium">
-                      {palette.name}
-                      {activePalette.id === palette.id &&
-                      activePalette.builtIn === palette.builtIn ? (
-                        <Check className="size-4" />
-                      ) : null}
+              <div className="space-y-6 p-5">
+                <section>
+                  <div className="mb-3 flex items-baseline justify-between gap-3">
+                    <h3 className="text-sm font-medium">Your palettes</h3>
+                    <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      Built-in and local
                     </span>
-                    <span className="flex h-8 overflow-hidden border border-white/10">
-                      {palette.colors.map((swatch) => (
-                        <span
-                          key={swatch.id}
-                          className="h-full min-w-2 flex-1"
-                          style={{ backgroundColor: swatch.hex }}
-                        />
-                      ))}
-                    </span>
-                    <span className="mt-2 block font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                      {palette.colors.length} colors
-                    </span>
-                  </button>
-                ))}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {palettes.map((palette) => (
+                      <PaletteCard
+                        key={paletteIdentity(palette)}
+                        palette={palette}
+                        active={paletteIdentity(activePalette) === paletteIdentity(palette)}
+                        onSelect={() => choosePalette(palette)}
+                      />
+                    ))}
                 <button
                   type="button"
                   className="grid min-h-28 place-items-center border border-dashed text-sm text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
@@ -178,6 +327,133 @@ export function PaletteDialog({
                     <Plus className="size-4" /> New palette
                   </span>
                 </button>
+                  </div>
+                </section>
+
+                <section className="border-t pt-5">
+                  <div className="mb-3">
+                    <h3 className="text-sm font-medium">Palette Town</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Community palettes load on demand and stay local only when edited.
+                    </p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                    <label className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                      <Input
+                        value={remoteQuery}
+                        className="pl-8"
+                        placeholder="Search palettes"
+                        aria-label="Search Palette Town"
+                        onChange={(event) => {
+                          setRemoteQuery(event.target.value);
+                          if (!event.target.value.trim() && remoteSort === "relevance") {
+                            setRemoteSort("popularity");
+                          }
+                          setRemotePage(1);
+                        }}
+                      />
+                    </label>
+                    <Select
+                      value={remoteTag}
+                      onValueChange={(value: string) => {
+                        setRemoteTag(value);
+                        setRemotePage(1);
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-36" aria-label="Filter by tag">
+                        <SelectValue placeholder="All tags" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All tags</SelectItem>
+                        {remoteTags.map((tag) => (
+                          <SelectItem key={tag.name} value={tag.name}>
+                            {tag.name} ({tag.paletteCount})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={remoteSort}
+                      onValueChange={(value: string) => {
+                        setRemoteSort(value as PaletteTownSort);
+                        setRemotePage(1);
+                      }}
+                    >
+                      <SelectTrigger className="w-full sm:w-32" aria-label="Sort palettes">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {remoteQuery.trim() ? (
+                          <SelectItem value="relevance">Relevance</SelectItem>
+                        ) : null}
+                        <SelectItem value="popularity">Popular</SelectItem>
+                        <SelectItem value="recency">Recent</SelectItem>
+                        <SelectItem value="name">Name</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {remoteError ? (
+                    <div className="mt-3 border border-destructive/40 p-4 text-sm" role="alert">
+                      <p>{remoteError}</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => setRemoteRequest((request) => request + 1)}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : remoteLoading && remotePalettes.length === 0 ? (
+                    <div className="grid min-h-32 place-items-center text-sm text-muted-foreground">
+                      <span className="flex items-center gap-2">
+                        <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                        Loading Palette Town
+                      </span>
+                    </div>
+                  ) : remotePalettes.length === 0 ? (
+                    <div className="grid min-h-32 place-items-center text-sm text-muted-foreground">
+                      No palettes match these filters.
+                    </div>
+                  ) : (
+                    <div className={cn("mt-3 grid gap-2 sm:grid-cols-2", remoteLoading && "opacity-60")}>
+                      {remotePalettes.map((palette) => (
+                        <PaletteCard
+                          key={paletteIdentity(palette)}
+                          palette={palette}
+                          active={paletteIdentity(activePalette) === paletteIdentity(palette)}
+                          onSelect={() => choosePalette(palette)}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {remotePagination.totalPages > 1 ? (
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={remoteLoading || remotePage <= 1}
+                        onClick={() => setRemotePage((page) => Math.max(1, page - 1))}
+                      >
+                        <ArrowLeft data-icon="inline-start" /> Previous
+                      </Button>
+                      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                        Page {remotePagination.page} of {remotePagination.totalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={remoteLoading || remotePage >= remotePagination.totalPages}
+                        onClick={() => setRemotePage((page) => page + 1)}
+                      >
+                        Next <ArrowRight data-icon="inline-end" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
               </div>
             </ScrollArea>
           </TabsContent>
@@ -193,7 +469,7 @@ export function PaletteDialog({
                     variant="outline"
                     size="sm"
                     className="text-destructive hover:text-destructive"
-                    disabled={Boolean(activePalette.builtIn)}
+                    disabled={activePalette.source !== "local"}
                     onClick={onDelete}
                   >
                     <Trash2 data-icon="inline-start" /> Delete
@@ -204,7 +480,7 @@ export function PaletteDialog({
                   <Input
                     value={activePalette.name}
                     onChange={(event) =>
-                      onChange({ ...activePalette, name: event.target.value, builtIn: false })
+                      onChange({ ...activePalette, name: event.target.value, source: "local" })
                     }
                   />
                 </label>

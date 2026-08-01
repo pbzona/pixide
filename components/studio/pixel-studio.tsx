@@ -53,6 +53,7 @@ import {
   DEFAULT_PALETTE,
   parsePaletteContents,
   type Palette,
+  paletteIdentity,
 } from "@/lib/palette";
 import {
   DEFAULT_INPUT_ADJUSTMENTS,
@@ -111,14 +112,27 @@ const loadCustomPalettes = (): Palette[] => {
   try {
     const parsed = JSON.parse(localStorage.getItem(CUSTOM_PALETTES_KEY) ?? "[]") as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is Palette =>
-        typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as Palette).id === "string" &&
-        typeof (entry as Palette).name === "string" &&
-        Array.isArray((entry as Palette).colors),
-    );
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const value = entry as Record<string, unknown>;
+      if (
+        typeof value.id !== "string" ||
+        typeof value.name !== "string" ||
+        !Array.isArray(value.colors)
+      ) {
+        return [];
+      }
+      const colors = value.colors.flatMap((swatch) =>
+        typeof swatch === "object" &&
+        swatch !== null &&
+        typeof (swatch as Record<string, unknown>).hex === "string"
+          ? [(swatch as Record<string, unknown>).hex as string]
+          : [],
+      );
+      if (colors.length !== value.colors.length) return [];
+      const restored = createPalette(value.id, value.name, colors, "local");
+      return restored.ok ? [restored.value] : [];
+    });
   } catch {
     return [];
   }
@@ -737,8 +751,7 @@ export function PixelStudio() {
     const currentPalette = activePaletteRef.current;
     const currentAdjustments = adjustmentsRef.current;
     if (
-      palette.id === currentPalette.id &&
-      Boolean(palette.builtIn) === Boolean(currentPalette.builtIn)
+      paletteIdentity(palette) === paletteIdentity(currentPalette)
     ) {
       return;
     }
@@ -767,12 +780,15 @@ export function PixelStudio() {
   const changePalette = (palette: Palette) => {
     paletteRevisionRef.current += 1;
     const colorsChanged = palette.colors !== activePalette.colors;
-    const nextPalette = activePalette.builtIn
+    const nextPalette = activePalette.source !== "local"
       ? {
           ...palette,
           id: customPaletteId(),
           name: palette.name === activePalette.name ? `${palette.name} copy` : palette.name,
-          builtIn: false,
+          source: "local" as const,
+          tags: undefined,
+          author: undefined,
+          attribution: undefined,
         }
       : palette;
 
@@ -835,9 +851,9 @@ export function PixelStudio() {
   };
 
   const deleteCustomPalette = (palette: Palette) => {
-    if (palette.builtIn) return;
+    if (palette.source !== "local") return;
     const current = activePaletteRef.current;
-    if (!current.builtIn && current.id === palette.id) {
+    if (current.source === "local" && current.id === palette.id) {
       selectPalette(DEFAULT_PALETTE);
     }
     setCustomPalettes((palettes) =>
@@ -1370,7 +1386,7 @@ export function PixelStudio() {
                 <SheetDescription>Set the cell grid and shape the output palette.</SheetDescription>
               </SheetHeader>
               <OutputSidebar
-                key={`${activePalette.builtIn ? "built-in" : "custom"}-${activePalette.id}`}
+                key={paletteIdentity(activePalette)}
                 {...outputProps}
               />
             </SheetContent>
@@ -1440,7 +1456,7 @@ export function PixelStudio() {
               <p className="mt-0.5 text-[10px] text-muted-foreground">Cell grid and palette</p>
             </div>
             <OutputSidebar
-              key={`${activePalette.builtIn ? "built-in" : "custom"}-${activePalette.id}`}
+              key={paletteIdentity(activePalette)}
               {...outputProps}
             />
           </aside>

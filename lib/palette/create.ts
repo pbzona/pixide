@@ -7,7 +7,12 @@ import {
   type Result,
 } from "@/lib/color";
 
-import { MAX_PALETTE_COLORS, type Palette, type PaletteSwatch } from "./types";
+import {
+  MAX_PALETTE_COLORS,
+  type Palette,
+  type PaletteSource,
+  type PaletteSwatch,
+} from "./types";
 
 export const normalizePaletteColors = (
   colors: readonly string[],
@@ -43,7 +48,7 @@ export const createPalette = (
   id: string,
   name: string,
   colors: readonly string[],
-  builtIn = false,
+  source: PaletteSource = "local",
 ): Result<Palette> => {
   const normalized = normalizePaletteColors(colors);
   if (!normalized.ok) return normalized;
@@ -54,7 +59,7 @@ export const createPalette = (
       id,
       name: name.trim() || "Untitled palette",
       colors: normalized.value.map((hex, index) => ({ id: index, hex })),
-      builtIn,
+      source,
     },
   };
 };
@@ -86,7 +91,7 @@ export const replaceSwatch = (
       colors: palette.colors.map((swatch) =>
         swatch.id === swatchId ? { ...swatch, hex: normalized.value } : swatch,
       ),
-      builtIn: false,
+      source: "local",
     },
   };
 };
@@ -118,7 +123,7 @@ export const appendSwatch = (palette: Palette, hex: string): Result<Palette> => 
         ...palette.colors,
         { id: nextSwatchId(palette.colors), hex: normalized.value },
       ],
-      builtIn: false,
+      source: "local",
     },
   };
 };
@@ -184,7 +189,7 @@ export const insertMidpointSwatch = (
   });
   return {
     ok: true,
-    value: { ...palette, colors, builtIn: false },
+    value: { ...palette, colors, source: "local" },
   };
 };
 
@@ -198,7 +203,7 @@ export const removeSwatch = (palette: Palette, swatchId: number): Result<Palette
     value: {
       ...palette,
       colors: palette.colors.filter((swatch) => swatch.id !== swatchId),
-      builtIn: false,
+      source: "local",
     },
   };
 };
@@ -216,5 +221,5 @@ export const moveSwatch = (
 
   const colors = [...palette.colors];
   [colors[index], colors[destination]] = [colors[destination], colors[index]];
-  return { ...palette, colors, builtIn: false };
+  return { ...palette, colors, source: "local" };
 };
